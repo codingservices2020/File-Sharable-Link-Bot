@@ -1,11 +1,11 @@
 import os
 import requests
 from pcloud import PyCloud
-# from keep_alive import keep_alive
-# keep_alive()
+from keep_alive import keep_alive
+keep_alive()
 
-from dotenv import load_dotenv
-load_dotenv()
+# from dotenv import load_dotenv
+# load_dotenv()
 
 PCLOUD_EMAIL = os.getenv("PCLOUD_EMAIL")
 PCLOUD_PASSWORD = os.getenv("PCLOUD_PASSWORD")
