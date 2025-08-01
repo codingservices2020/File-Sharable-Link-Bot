@@ -15,10 +15,10 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 from pcloud_utils import create_folder, upload_file, generate_share_link, delete_file
-# from keep_alive import keep_alive
-# keep_alive()
-from dotenv import load_dotenv
-load_dotenv()
+from keep_alive import keep_alive
+keep_alive()
+# from dotenv import load_dotenv
+# load_dotenv()
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
