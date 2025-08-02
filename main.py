@@ -42,7 +42,7 @@ def shorten_url(long_url):
 # /start command
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🔰*Welcome to File Link Bot!*🔰\n\n"
+        "🔰*Welcome to ShareFile Link Bot!*🔰\n\n"
         "✅ Send me any file and I’ll upload it to the cloud and give you a short download link. "
         "This link will be valid for 30 days.\n\n"
         "✅Type /help to see more.",
@@ -155,3 +155,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
