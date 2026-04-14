@@ -3,5 +3,7 @@ flask
 python-telegram-bot
 python-dotenv~=1.0.1
 requests
-pcloud
 schedule
+firebase-admin
+google-api-python-client
+protobuf
