@@ -14,11 +14,11 @@ from telegram.ext import (
     ContextTypes
 )
 from telegram.request import HTTPXRequest
-from pcloud_utils import create_folder, upload_file, generate_share_link, delete_file
-from keep_alive import keep_alive
-keep_alive()
-# from dotenv import load_dotenv
-# load_dotenv()
+from google_drive_files import create_folder, upload_file, generate_download_link, drive_service
+# from keep_alive import keep_alive
+# keep_alive()
+from dotenv import load_dotenv
+load_dotenv()
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
@@ -39,6 +39,20 @@ def shorten_url(long_url):
         print(f"Error shortening URL: {e}")
         return None
 
+# Auto-delete expired files
+def delete_expired_files():
+    now = time.time()
+    expired = [fid for fid, info in file_schedule.items() if now >= info["expiry"]]
+
+    for fid in expired:
+        try:
+            drive_service.files().delete(fileId=fid).execute()
+            print(f"🗑️ Deleted from Google Drive: {fid}")
+        except Exception as e:
+            print(f"❌ Failed to delete {fid}: {e}")
+
+        del file_schedule[fid]
+
 # /start command
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -54,7 +68,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📌 *Bot Instructions:*\n\n"
         "1️⃣ Send me any file (max 1GB).\n"
-        "2️⃣ I’ll upload it to pCloud and give you a short download link.\n"
+        "2️⃣ I’ll upload it to cloud and give you a short download link.\n"
         "3️⃣ The link will expire automatically after 30 days.\n"
         "🔒 Files are stored securely and automatically deleted.\n\n"
         "🆘 Need help? Contact the bot admin [Coding Services](https://t.me/coding_services)",
@@ -80,8 +94,8 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         folder_id = create_folder("TelegramUploads")
         file_id = upload_file(folder_id, file_path)
-        link_data = generate_share_link(file_id)
-        short_link = shorten_url(link_data['link'])
+        download_link = generate_download_link(file_id)
+        short_link = shorten_url(download_link)
         # Edit the status message we stored earlier
         await status_message.edit_text(f"✅ Here is your link (valid for 30 days):\n{short_link}")
 
@@ -99,14 +113,6 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.exception("🚫 Error in handle_file:")
         await update.message.reply_text("🚫 Failed to process your file. Please try again later.")
-
-# Auto-delete expired files
-def delete_expired_files():
-    now = time.time()
-    expired = [fid for fid, info in file_schedule.items() if now >= info["expiry"]]
-    for fid in expired:
-        delete_file(fid)
-        del file_schedule[fid]
 
 
 # /status command
@@ -136,6 +142,7 @@ def run_schedule():
         schedule.run_pending()
         time.sleep(60)
 
+
 # Start bot
 def main():
     schedule.every(12).hours.do(delete_expired_files)
@@ -155,4 +162,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
