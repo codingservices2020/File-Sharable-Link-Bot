@@ -15,10 +15,10 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 from google_drive_files import create_folder, upload_file, generate_download_link, drive_service
-# from keep_alive import keep_alive
-# keep_alive()
-from dotenv import load_dotenv
-load_dotenv()
+from keep_alive import keep_alive
+keep_alive()
+# from dotenv import load_dotenv
+# load_dotenv()
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
