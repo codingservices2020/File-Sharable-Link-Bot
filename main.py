@@ -1,33 +1,181 @@
+# 🔥 CLEAN VERSION (NO PREMIUM FEATURE)
+
 import os
 import time
-import threading
 import logging
+import csv
+from datetime import datetime
 import requests
-import schedule
-from datetime import datetime, timedelta
-from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder,
-    MessageHandler,
-    CommandHandler,
-    filters,
-    ContextTypes
-)
-from telegram.request import HTTPXRequest
-from google_drive_files import create_folder, upload_file, generate_download_link, drive_service
-from keep_alive import keep_alive
-keep_alive()
-# from dotenv import load_dotenv
-# load_dotenv()
 
-# Logging setup
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
+
+from pcloud_utils import create_folder, upload_file, generate_share_link, delete_file
+from firebase_db import update_user_status, db
+
+from dotenv import load_dotenv
+load_dotenv()
+
 logging.basicConfig(level=logging.INFO)
 
 TOKEN = os.getenv("TOKEN")
-# Track file expiry
-file_schedule = {}  # file_id: {"expiry": timestamp, "filename": name}
+ADMIN_ID = os.getenv("ADMIN_ID")
 
-# URL shortener
+file_schedule = {}
+
+# ---------------- ADMIN UI ----------------
+def admin_keyboard():
+    return ReplyKeyboardMarkup([
+        ["📊 Stats", "📢 Broadcast"],
+        ["📈 Graph", "💾 Export"],
+        ["🚫 Ban"]
+    ], resize_keyboard=True)
+
+# ---------------- HELP ----------------
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        """
+Commands available:
+/start - Start the bot
+/help - Show this help message
+"""
+    )
+
+# ---------------- START ----------------
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+
+    update_user_status(user.id, user.username, user.first_name)
+
+    db.collection("bot_users").document(str(user.id)).set({
+        "created_at": datetime.now().strftime("%Y-%m-%d")
+    }, merge=True)
+
+    msg = (
+        """
+🔰Welcome to ShareFile Link Bot!🔰
+
+1️⃣ Send me any file (max 1GB).
+2️⃣ I’ll upload it to cloud and give you a short download link.
+3️⃣ The link will expire automatically after 30 days.
+🔒 Files are stored securely and automatically deleted.
+
+🆘 Need help? Contact the bot admin Coding Services (https://t.me/coding_services)
+"""
+    )
+
+    if str(user.id) == str(ADMIN_ID):
+        kb = ReplyKeyboardMarkup([
+            ["⬆️ 🙂  Upload"],
+            ["📊 Stats", "📢 Broadcast"],
+            ["📈 Graph", "💾 Export"],
+            ["🚫 Ban"]
+        ], resize_keyboard=True)
+        await update.message.reply_text(msg, reply_markup=kb)
+    else:
+        kb = ReplyKeyboardMarkup([["⬆️ Upload"]], resize_keyboard=True)
+        await update.message.reply_text(msg, reply_markup=kb)
+
+# ---------------- ACTIVE USERS ----------------
+def get_active_users():
+    users = db.collection("bot_users").stream()
+    active = []
+
+    for u in users:
+        data = u.to_dict()
+        if not data.get("is_blocked"):
+            active.append(int(u.id))
+
+    return active
+
+# ---------------- GRAPH ----------------
+def generate_graph_text():
+    users = db.collection("bot_users").stream()
+    daily = {}
+
+    for u in users:
+        d = u.to_dict().get("created_at")
+        if d:
+            daily[d] = daily.get(d, 0) + 1
+
+    msg = "📈 User Growth (Text Chart)\n\n"
+
+    for d, count in sorted(daily.items()):
+        bar = "█" * min(count, 20)
+        msg += f"{d} | {bar} ({count})\n"
+
+    return msg
+
+# ---------------- BUTTON & MODE HANDLER ----------------
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    user_id = str(update.effective_user.id)
+
+    # Check pending modes first
+    if context.user_data.get('broadcast'):
+        context.user_data['broadcast'] = False
+        users = get_active_users()
+
+        for uid in users:
+            try:
+                await context.bot.send_message(chat_id=int(uid), text=text)
+            except Exception:
+                update_user_status(uid, "Unknown", "Unknown", True)
+
+        await update.message.reply_text("Broadcast Done")
+        return
+
+    elif context.user_data.get('ban'):
+        context.user_data['ban'] = False
+        db.collection("bot_users").document(text).set({"is_blocked": True}, merge=True)
+        await update.message.reply_text("User banned")
+        return
+
+    # Handle standard buttons
+    if text == "⬆️ Upload":
+        await update.message.reply_text("📤 Send your file now.")
+        return
+
+    if user_id != str(ADMIN_ID):
+        return
+
+    if text == "📊 Stats":
+        users = list(db.collection("bot_users").stream())
+        total = len(users)
+        blocked = sum(1 for u in users if u.to_dict().get("is_blocked"))
+
+        await update.message.reply_text(f"Total: {total}\nBlocked: {blocked}")
+
+    elif text == "📢 Broadcast":
+        context.user_data['broadcast'] = True
+        await update.message.reply_text("Send message to broadcast:")
+
+    elif text == "📈 Graph":
+        await update.message.reply_text(generate_graph_text())
+
+    elif text == "💾 Export":
+        users = db.collection("bot_users").stream()
+
+        with open("users.csv", "w", newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(["user_id", "username", "first_name", "blocked"])
+
+            for u in users:
+                data = u.to_dict()
+                writer.writerow([
+                    u.id,
+                    data.get("username"),
+                    data.get("first_name"),
+                    data.get("is_blocked")
+                ])
+
+        await update.message.reply_document(open("users.csv", "rb"))
+
+    elif text == "🚫 Ban":
+        context.user_data['ban'] = True
+        await update.message.reply_text("Send user ID to ban:")
+
+# ---------------- URL SHORTENER ----------------
 def shorten_url(long_url):
     base_url = "https://is.gd/create.php"
     params = {"format": "simple", "url": long_url}
@@ -37,127 +185,57 @@ def shorten_url(long_url):
         return response.text.strip()
     except requests.RequestException as e:
         print(f"Error shortening URL: {e}")
-        return None
+        return long_url
 
-# Auto-delete expired files
-def delete_expired_files():
-    now = time.time()
-    expired = [fid for fid, info in file_schedule.items() if now >= info["expiry"]]
-
-    for fid in expired:
-        try:
-            drive_service.files().delete(fileId=fid).execute()
-            print(f"🗑️ Deleted from Google Drive: {fid}")
-        except Exception as e:
-            print(f"❌ Failed to delete {fid}: {e}")
-
-        del file_schedule[fid]
-
-# /start command
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🔰*Welcome to ShareFile Link Bot!*🔰\n\n"
-        "✅ Send me any file and I’ll upload it to the cloud and give you a short download link. "
-        "This link will be valid for 30 days.\n\n"
-        "✅Type /help to see more.",
-        parse_mode="Markdown",
-    )
-
-# /help command
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "📌 *Bot Instructions:*\n\n"
-        "1️⃣ Send me any file (max 1GB).\n"
-        "2️⃣ I’ll upload it to cloud and give you a short download link.\n"
-        "3️⃣ The link will expire automatically after 30 days.\n"
-        "🔒 Files are stored securely and automatically deleted.\n\n"
-        "🆘 Need help? Contact the bot admin [Coding Services](https://t.me/coding_services)",
-        parse_mode="Markdown",
-    )
-
-# Handle file uploads
+# ---------------- FILE ----------------
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        doc = update.message.document
-        if doc.file_size > 1024 * 1024 * 1024:  # 1GB limit
-            await update.message.reply_text("🚫 File too large Limit: 1GB")
-            return
-
-        # Send the initial message and store it
-        status_message = await update.message.reply_text("♻️ File uploading...")
-
-        tg_file = await doc.get_file()
-        filename = doc.file_name
-        os.makedirs("temp", exist_ok=True)
-        file_path = f"./temp/{filename}"
-        await tg_file.download_to_drive(file_path)
-
-        folder_id = create_folder("TelegramUploads")
-        file_id = upload_file(folder_id, file_path)
-        download_link = generate_download_link(file_id)
-        short_link = shorten_url(download_link)
-        # Edit the status message we stored earlier
-        await status_message.edit_text(f"✅ Here is your link (valid for 30 days):\n{short_link}")
-
-        file_schedule[file_id] = {
-            "expiry": time.time() + 30 * 86400,
-            "filename": filename
-        }
-
-        # delete file from temp folder after uploading to pCloud
-        try:
-            os.remove(file_path)
-        except OSError as e:
-            logging.warning(f"Could not remove temp file: {e}")
-
-    except Exception as e:
-        logging.exception("🚫 Error in handle_file:")
-        await update.message.reply_text("🚫 Failed to process your file. Please try again later.")
-
-
-# /status command
-async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not file_schedule:
-        await update.message.reply_text("📭 No files are scheduled for deletion.")
+    doc = update.message.document
+    if not doc:
         return
 
-    now = time.time()
-    status_lines = [f"📚 Total files scheduled: {len(file_schedule)}\n"]
+    if doc.file_size and doc.file_size > 1024 * 1024 * 1024:  # 1GB limit
+        await update.message.reply_text("🚫 File too large. Limit: 1GB")
+        return
 
-    for fid, info in file_schedule.items():
-        remaining = info["expiry"] - now
-        if remaining > 0:
-            remaining_str = str(timedelta(seconds=int(remaining)))
-            status_lines.append(
-                f"📘 *{info['filename']}*\n"
-                f"🆔 *File ID:* `{fid}`\n"
-                f"⏳ *Expires in:* {remaining_str}\n"
-            )
+    status = await update.message.reply_text("♻️ Uploading to pCloud...")
+    file_path = None
 
-    await update.message.reply_text("\n".join(status_lines), parse_mode="Markdown")
+    try:
+        tg_file = await doc.get_file()
+        os.makedirs("temp", exist_ok=True)
+        file_path = os.path.join("temp", doc.file_name)
+        await tg_file.download_to_drive(file_path)
 
+        # Upload to pCloud
+        folder_id = create_folder("TelegramUploads")
+        file_id = upload_file(folder_id, file_path)
+        share_data = generate_share_link(file_id)
+        short_link = share_data.get("shortlink") or share_data.get("link")
 
-def run_schedule():
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
+        await status.edit_text(f"✅ Here is your link (valid for 30 days):\n{short_link}")
 
+    except Exception as e:
+        logging.exception("Failed to upload file to pCloud:")
+        await status.edit_text(f"❌ Failed to upload file: {str(e)}")
 
-# Start bot
+    finally:
+        if file_path and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except OSError as e:
+                logging.warning(f"Could not remove temp file: {e}")
+
+# ---------------- MAIN ----------------
 def main():
-    schedule.every(12).hours.do(delete_expired_files)
-    # schedule.every(1).minutes.do(delete_expired_files)
-
-    threading.Thread(target=run_schedule, daemon=True).start()
-
-    request = HTTPXRequest(connect_timeout=10.0, read_timeout=30.0)
-    app = ApplicationBuilder().token(TOKEN).request(request).build()
+    app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("help", help_command))
+
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_file))
 
+    print("Bot is running with pCloud...")
     app.run_polling()
 
 if __name__ == "__main__":
