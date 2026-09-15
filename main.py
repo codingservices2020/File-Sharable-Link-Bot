@@ -13,8 +13,10 @@ from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, fil
 from pcloud_utils import create_folder, upload_file, generate_share_link, delete_file
 from firebase_db import update_user_status, db
 
-from dotenv import load_dotenv
-load_dotenv()
+# from dotenv import load_dotenv
+# load_dotenv()
+from keep_alive import keep_alive
+keep_alive()
 
 logging.basicConfig(level=logging.INFO)
 
