@@ -1,8 +1,21 @@
+# Web Framework
 flask
+Flask-Limiter
+gunicorn
+werkzeug
+
+# Telegram Bot
 python-telegram-bot
-python-dotenv~=1.0.1
-requests
-schedule
+
+# Cloud Storage & Database
+pcloud
 firebase-admin
+
+# Google Drive (legacy)
 google-api-python-client
 protobuf
+
+# Utilities
+python-dotenv
+requests
+schedule
